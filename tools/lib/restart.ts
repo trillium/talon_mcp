@@ -16,10 +16,6 @@ export interface RestartResult {
   }
 }
 
-function getReplPath(): string {
-  return process.env.TALON_REPL_PATH || join(homedir(), '.talon', '.venv', 'bin', 'repl')
-}
-
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -46,16 +42,31 @@ async function waitForTalonExit(timeoutMs = 10000): Promise<boolean> {
 
 async function waitForTalonReady(timeoutMs = 30000): Promise<boolean> {
   const start = Date.now()
-  const replPath = getReplPath()
+  const logPath = join(homedir(), '.talon', 'talon.log')
+
+  // Get initial log size to only check new content
+  let lastSize = 0
+  try {
+    const { stdout } = await execAsync(`wc -c < "${logPath}"`)
+    lastSize = parseInt(stdout.trim(), 10)
+  } catch {
+    // If we can't get log size, start from 0
+  }
 
   while (Date.now() - start < timeoutMs) {
     try {
-      // Try a simple REPL command to verify Talon is ready
-      await execAsync(`echo 'print("ready")' | "${replPath}"`, { timeout: 5000 })
-      return true
+      // Check for the "Dispatched launch events" message in new log content
+      const { stdout } = await execAsync(
+        `tail -c +${lastSize} "${logPath}" | grep -m1 "Dispatched launch events"`,
+        { timeout: 2000 }
+      )
+      if (stdout.includes('Dispatched launch events')) {
+        return true
+      }
     } catch {
-      await sleep(500)
+      // grep returns non-zero if not found, continue polling
     }
+    await sleep(500)
   }
   return false
 }
