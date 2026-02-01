@@ -16,6 +16,7 @@ import { z } from 'zod'
 import { getTalonConfig } from './lib/config'
 import { getLogsQuery, getLogsRegex, getRecentLogs } from './lib/get-logs'
 import { getStatus } from './lib/get-status'
+import { createKnowledge, getKnowledge, listKnowledge, searchKnowledge } from './lib/knowledge'
 import { executeRepl } from './lib/repl'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -44,6 +45,10 @@ Tools:
   talon_getStatus       Check if Talon is running
   talon_repl            Execute Python code in Talon REPL
   talon_getConfig       Get Talon configuration paths
+  talon_listKnowledge   List all knowledge documents
+  talon_getKnowledge    Get a specific knowledge document
+  talon_searchKnowledge Search knowledge documents
+  talon_createKnowledge Create a new knowledge document
 `)
   process.exit(0)
 }
@@ -142,6 +147,52 @@ server.tool(
   async (params) => {
     const result = await executeRepl(params)
     return { content: [{ type: 'text', text: result }] }
+  }
+)
+
+// --- Knowledge Tools ---
+
+server.tool('talon_listKnowledge', 'List all available Talon knowledge documents', {}, async () => {
+  const result = listKnowledge()
+  return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+})
+
+server.tool(
+  'talon_getKnowledge',
+  'Get a specific Talon knowledge document by slug',
+  {
+    slug: z.string().describe('The slug/identifier of the knowledge document'),
+  },
+  async (params) => {
+    const result = getKnowledge(params.slug)
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+  }
+)
+
+server.tool(
+  'talon_searchKnowledge',
+  'Search Talon knowledge documents by query',
+  {
+    query: z.string().describe('Search query to find in knowledge documents'),
+  },
+  async (params) => {
+    const result = searchKnowledge(params.query)
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+  }
+)
+
+server.tool(
+  'talon_createKnowledge',
+  'Create a new Talon knowledge document',
+  {
+    slug: z
+      .string()
+      .describe('URL-friendly identifier for the document (e.g., "hot-reload-events")'),
+    content: z.string().describe('Markdown content for the knowledge document'),
+  },
+  async (params) => {
+    const result = createKnowledge(params.slug, params.content)
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
   }
 )
 
