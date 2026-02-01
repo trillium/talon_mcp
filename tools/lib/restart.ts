@@ -9,6 +9,11 @@ export interface RestartResult {
   success: boolean
   message: string
   error?: string
+  timing?: {
+    exitWaitMs: number
+    readyWaitMs: number
+    totalMs: number
+  }
 }
 
 function getReplPath(): string {
@@ -60,12 +65,20 @@ async function waitForTalonReady(timeoutMs = 30000): Promise<boolean> {
  * Blocks until Talon is fully ready (REPL responds).
  */
 export async function restartTalon(): Promise<RestartResult> {
+  const totalStart = Date.now()
+
   try {
     // Quit Talon gracefully via AppleScript
     await execAsync('osascript -e \'quit app "Talon"\'')
 
+    // Brief pause to let quit signal propagate
+    await sleep(500)
+
     // Wait for Talon to fully exit
+    const exitStart = Date.now()
     const exited = await waitForTalonExit(10000)
+    const exitWaitMs = Date.now() - exitStart
+
     if (!exited) {
       return {
         success: false,
@@ -73,24 +86,40 @@ export async function restartTalon(): Promise<RestartResult> {
       }
     }
 
-    // Small buffer after exit
-    await sleep(500)
+    // Buffer after exit to ensure clean state
+    await sleep(1000)
 
     // Relaunch Talon
     await execAsync('open /Applications/Talon.app')
 
+    // Minimum wait for Talon to start initializing
+    await sleep(2000)
+
     // Wait for Talon to be ready (REPL responds)
+    const readyStart = Date.now()
     const ready = await waitForTalonReady(30000)
+    const readyWaitMs = Date.now() - readyStart
+
     if (!ready) {
       return {
         success: false,
         message: 'Talon launched but did not become ready within timeout',
+        timing: {
+          exitWaitMs,
+          readyWaitMs,
+          totalMs: Date.now() - totalStart,
+        },
       }
     }
 
     return {
       success: true,
       message: 'Talon has been restarted and is ready',
+      timing: {
+        exitWaitMs,
+        readyWaitMs,
+        totalMs: Date.now() - totalStart,
+      },
     }
   } catch (error) {
     return {
