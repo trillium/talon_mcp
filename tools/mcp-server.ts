@@ -18,6 +18,7 @@ import { getLogsQuery, getLogsRegex, getRecentLogs } from './lib/get-logs'
 import { getStatus } from './lib/get-status'
 import { createKnowledge, getKnowledge, listKnowledge, searchKnowledge } from './lib/knowledge'
 import { executeRepl } from './lib/repl'
+import { restartTalon } from './lib/restart'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const packageJson = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'))
@@ -49,6 +50,7 @@ Tools:
   talon_getKnowledge    Get a specific knowledge document
   talon_searchKnowledge Search knowledge documents
   talon_createKnowledge Create a new knowledge document
+  talon_restart         Quit and relaunch Talon
 `)
   process.exit(0)
 }
@@ -192,6 +194,18 @@ server.tool(
   },
   async (params) => {
     const result = createKnowledge(params.slug, params.content)
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+  }
+)
+
+// --- System Tools ---
+
+server.tool(
+  'talon_restart',
+  'Quit and relaunch Talon. Use this to apply configuration changes or recover from issues.',
+  {},
+  async () => {
+    const result = await restartTalon()
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
   }
 )
