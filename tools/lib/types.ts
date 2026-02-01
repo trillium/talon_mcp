@@ -15,6 +15,7 @@ export interface ReplResult {
   success: boolean
   output: string
   error?: string
+  info?: string
 }
 
 export interface TalonStatus {

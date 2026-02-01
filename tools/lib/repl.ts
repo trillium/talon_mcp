@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { detectUnnecessaryTalonImports } from './feedback'
 import type { ReplResult } from './types'
 
 export interface ReplParams {
@@ -16,10 +17,18 @@ export async function executeRepl(params: ReplParams): Promise<string> {
   const { code, timeout = 10000 } = params
   const replPath = getReplPath()
 
+  // Check for unnecessary talon imports
+  const importInfo = detectUnnecessaryTalonImports(code)
+
   return new Promise((resolve) => {
     const result: ReplResult = {
       success: false,
       output: '',
+    }
+
+    // Add info about unnecessary imports if detected
+    if (importInfo) {
+      result.info = importInfo
     }
 
     // Use bash to properly execute the REPL script with piped input
