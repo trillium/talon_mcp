@@ -17,6 +17,7 @@ import { getTalonConfig } from './lib/config'
 import { getLogsQuery, getLogsRegex, getRecentLogs } from './lib/get-logs'
 import { getStatus } from './lib/get-status'
 import { createKnowledge, getKnowledge, listKnowledge, searchKnowledge } from './lib/knowledge'
+import { mimicPhrase } from './lib/mimic'
 import { executeRepl } from './lib/repl'
 import { restartTalon } from './lib/restart'
 
@@ -51,6 +52,7 @@ Tools:
   talon_searchKnowledge Search knowledge documents
   talon_createKnowledge Create a new knowledge document
   talon_restart         Quit and relaunch Talon
+  talon_mimic           Simulate speaking a phrase
 `)
   process.exit(0)
 }
@@ -207,6 +209,20 @@ server.tool(
   async () => {
     const result = await restartTalon()
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+  }
+)
+
+server.tool(
+  'talon_mimic',
+  'Simulate speaking a phrase to Talon. Executes the phrase as if it were spoken by the user.',
+  {
+    phrase: z
+      .string()
+      .describe('The phrase to simulate speaking (e.g., "go to sleep", "help alphabet")'),
+  },
+  async (params) => {
+    const result = await mimicPhrase(params)
+    return { content: [{ type: 'text', text: result }] }
   }
 )
 
