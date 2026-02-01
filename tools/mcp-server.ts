@@ -15,6 +15,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { getTalonConfig } from './lib/config'
 import { getLogsQuery, getLogsRegex, getRecentLogs } from './lib/get-logs'
+import { getScope } from './lib/get-scope'
 import { getStatus } from './lib/get-status'
 import { createKnowledge, getKnowledge, listKnowledge, searchKnowledge } from './lib/knowledge'
 import { mimicPhrase } from './lib/mimic'
@@ -45,6 +46,7 @@ Tools:
   talon_getLogsRegex    Filter logs by regex pattern
   talon_getLogsQuery    Filter logs by text search
   talon_getStatus       Check if Talon is running
+  talon_getScope        Get current mode, app, window, and active contexts
   talon_repl            Execute Python code in Talon REPL
   talon_getConfig       Get Talon configuration paths
   talon_listKnowledge   List all knowledge documents
@@ -118,6 +120,16 @@ server.tool(
   {},
   async () => {
     const result = await getStatus()
+    return { content: [{ type: 'text', text: result }] }
+  }
+)
+
+server.tool(
+  'talon_getScope',
+  'Get current Talon scope: mode (command/dictation), active app, window title, speech status, and active contexts',
+  {},
+  async () => {
+    const result = await getScope()
     return { content: [{ type: 'text', text: result }] }
   }
 )
