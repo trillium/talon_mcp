@@ -6,37 +6,49 @@ function getReplPath(): string {
   return process.env.TALON_REPL_PATH || join(homedir(), '.talon', '.venv', 'bin', 'repl')
 }
 
-// Compact single-line Python script for scope data
-const SCOPE_SCRIPT = `import json;s=lambda o:list(o)if isinstance(o,set)else{k:s(v)for k,v in o.items()}if isinstance(o,dict)else o;st=speech_system.status();print(json.dumps({"mode":s(scope.get("mode")),"app":s(scope.get("app")),"win":s(scope.get("win")),"speech":{"ready":st.ready,"grammars":{n:{"enabled":g.enabled,"exclusive":g.exclusive,"priority":g.priority}for n,g in st.grammars.items()}},"active_contexts":[str(c)for c in registry.active_contexts()][:20],"active_contexts_count":len(list(registry.active_contexts()))}))`
+// Compact single-line Python script for scope data (includes tags)
+const SCOPE_SCRIPT = `import json;s=lambda o:list(o)if isinstance(o,set)else{k:s(v)for k,v in o.items()}if isinstance(o,dict)else o;st=speech_system.status();print(json.dumps({"mode":s(scope.get("mode")),"app":s(scope.get("app")),"win":s(scope.get("win")),"speech":{"ready":st.ready,"grammars":{n:{"enabled":g.enabled,"exclusive":g.exclusive,"priority":g.priority}for n,g in st.grammars.items()}},"tags":sorted([t for t in registry.tags]),"active_contexts":[str(c)for c in registry.active_contexts()][:20],"active_contexts_count":len(list(registry.active_contexts()))}))`
+
+export const SCOPE_KEYS = [
+  'mode',
+  'app',
+  'win',
+  'speech',
+  'tags',
+  'active_contexts',
+  'active_contexts_count',
+] as const
+export type ScopeKey = (typeof SCOPE_KEYS)[number]
 
 export interface ScopeResult {
   success: boolean
   scope?: {
-    mode: string[]
-    app: {
+    mode?: string[]
+    app?: {
       name: string
       bundle: string
       path: string
       exe: string
       app?: string[]
     }
-    win: {
+    win?: {
       title: string
       doc?: string
       filename?: string
       file_ext?: string
     }
-    speech: {
+    speech?: {
       ready: boolean
       grammars: Record<string, { enabled: boolean; exclusive: boolean; priority: number }>
     }
-    active_contexts: string[]
-    active_contexts_count: number
+    tags?: string[]
+    active_contexts?: string[]
+    active_contexts_count?: number
   }
   error?: string
 }
 
-export async function getScope(): Promise<string> {
+export async function getScope(keys?: ScopeKey[]): Promise<string> {
   const replPath = getReplPath()
 
   return new Promise((resolve) => {
@@ -68,7 +80,16 @@ export async function getScope(): Promise<string> {
 
         if (jsonLine) {
           try {
-            const scope = JSON.parse(jsonLine)
+            const fullScope = JSON.parse(jsonLine)
+
+            // Filter to requested keys if provided, otherwise return all
+            const scope =
+              keys && keys.length > 0
+                ? Object.fromEntries(
+                    keys.filter((k) => k in fullScope).map((k) => [k, fullScope[k]])
+                  )
+                : fullScope
+
             resolve(JSON.stringify({ success: true, scope }, null, 2))
           } catch {
             resolve(JSON.stringify({ success: false, error: 'Failed to parse scope data' }))

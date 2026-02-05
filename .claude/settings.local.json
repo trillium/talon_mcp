@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bunx tsc:*)",
+      "Bash(bun run check:*)",
+      "Bash(bun run format:*)",
+      "Bash(ls:*)",
+      "Bash(xargs cat:*)"
+    ]
+  }
+}

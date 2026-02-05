@@ -12,15 +12,12 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { z } from 'zod'
-import { getTalonConfig } from './lib/config'
-import { getLogsQuery, getLogsRegex, getRecentLogs } from './lib/get-logs'
-import { getScope } from './lib/get-scope'
-import { getStatus } from './lib/get-status'
-import { createKnowledge, getKnowledge, listKnowledge, searchKnowledge } from './lib/knowledge'
-import { mimicPhrase } from './lib/mimic'
-import { executeRepl } from './lib/repl'
-import { restartTalon } from './lib/restart'
+import {
+  registerKnowledgeTools,
+  registerLogTools,
+  registerScopeTools,
+  registerSystemTools,
+} from './lib/registrations'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const packageJson = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'))
@@ -42,19 +39,23 @@ Description:
   Exposes tools for accessing logs, REPL, and system information.
 
 Tools:
-  talon_getRecentLogs   Get recent Talon log entries
-  talon_getLogsRegex    Filter logs by regex pattern
-  talon_getLogsQuery    Filter logs by text search
-  talon_getStatus       Check if Talon is running
-  talon_getScope        Get current mode, app, window, and active contexts
-  talon_repl            Execute Python code in Talon REPL
-  talon_getConfig       Get Talon configuration paths
-  talon_listKnowledge   List all knowledge documents
-  talon_getKnowledge    Get a specific knowledge document
-  talon_searchKnowledge Search knowledge documents
-  talon_createKnowledge Create a new knowledge document
-  talon_restart         Quit and relaunch Talon
-  talon_mimic           Simulate speaking a phrase
+  talon_getRecentLogs     Get recent Talon log entries
+  talon_getLogsRegex      Filter logs by regex pattern
+  talon_getLogsQuery      Filter logs by text search
+  talon_getStatus         Check if Talon is running
+  talon_getScope          Get current mode, app, window, tags, and active contexts
+  talon_evaluateScope     Evaluate context conditions against current scope
+  talon_repl              Execute Python code in Talon REPL
+  talon_getConfig         Get Talon configuration paths
+  talon_listKnowledge     List all knowledge documents
+  talon_getKnowledge      Get a specific knowledge document
+  talon_searchKnowledge   Search knowledge documents
+  talon_createKnowledge   Create a new knowledge document
+  talon_restart           Quit and relaunch Talon
+  talon_getStartupStatus  Get errors/warnings from last startup
+  talon_getStartupHistory Get startup status history
+  talon_mimic             Simulate speaking a phrase
+  talon_upgradeKnausj     Upgrade community/knausj fork to latest
 `)
   process.exit(0)
 }
@@ -70,173 +71,11 @@ const server = new McpServer({
   version: packageJson.version,
 })
 
-// --- Log Tools ---
-
-server.tool(
-  'talon_getRecentLogs',
-  'Get the most recent Talon log entries',
-  {
-    lines: z.number().optional().describe('Number of log lines to return (default: 100)'),
-  },
-  async (params) => {
-    const result = await getRecentLogs(params)
-    return { content: [{ type: 'text', text: result }] }
-  }
-)
-
-server.tool(
-  'talon_getLogsRegex',
-  'Filter Talon logs by regex pattern',
-  {
-    pattern: z.string().describe('Regex pattern to match log lines'),
-    lines: z.number().optional().describe('Max number of matching lines to return (default: 100)'),
-    flags: z.string().optional().describe('Regex flags (default: "i" for case-insensitive)'),
-  },
-  async (params) => {
-    const result = await getLogsRegex(params)
-    return { content: [{ type: 'text', text: result }] }
-  }
-)
-
-server.tool(
-  'talon_getLogsQuery',
-  'Filter Talon logs by text search query',
-  {
-    query: z.string().describe('Text to search for in log lines'),
-    lines: z.number().optional().describe('Max number of matching lines to return (default: 100)'),
-    caseSensitive: z.boolean().optional().describe('Case-sensitive search (default: false)'),
-  },
-  async (params) => {
-    const result = await getLogsQuery(params)
-    return { content: [{ type: 'text', text: result }] }
-  }
-)
-
-// --- Status & Config Tools ---
-
-server.tool(
-  'talon_getStatus',
-  'Check if Talon is running and get status information',
-  {},
-  async () => {
-    const result = await getStatus()
-    return { content: [{ type: 'text', text: result }] }
-  }
-)
-
-server.tool(
-  'talon_getScope',
-  'Get current Talon scope: mode (command/dictation), active app, window title, speech status, and active contexts',
-  {},
-  async () => {
-    const result = await getScope()
-    return { content: [{ type: 'text', text: result }] }
-  }
-)
-
-server.tool(
-  'talon_getConfig',
-  'Get Talon configuration paths (home, logs, user scripts)',
-  {},
-  async () => {
-    const config = getTalonConfig()
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({ success: true, config }, null, 2),
-        },
-      ],
-    }
-  }
-)
-
-// --- REPL Tool ---
-
-server.tool(
-  'talon_repl',
-  'Execute Python code in Talon REPL. Has access to all Talon modules (talon, talon.app, etc.)',
-  {
-    code: z.string().describe('Python code to execute'),
-    timeout: z.number().optional().describe('Timeout in milliseconds (default: 10000)'),
-  },
-  async (params) => {
-    const result = await executeRepl(params)
-    return { content: [{ type: 'text', text: result }] }
-  }
-)
-
-// --- Knowledge Tools ---
-
-server.tool('talon_listKnowledge', 'List all available Talon knowledge documents', {}, async () => {
-  const result = listKnowledge()
-  return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
-})
-
-server.tool(
-  'talon_getKnowledge',
-  'Get a specific Talon knowledge document by slug',
-  {
-    slug: z.string().describe('The slug/identifier of the knowledge document'),
-  },
-  async (params) => {
-    const result = getKnowledge(params.slug)
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
-  }
-)
-
-server.tool(
-  'talon_searchKnowledge',
-  'Search Talon knowledge documents by query',
-  {
-    query: z.string().describe('Search query to find in knowledge documents'),
-  },
-  async (params) => {
-    const result = searchKnowledge(params.query)
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
-  }
-)
-
-server.tool(
-  'talon_createKnowledge',
-  'Create a new Talon knowledge document',
-  {
-    slug: z
-      .string()
-      .describe('URL-friendly identifier for the document (e.g., "hot-reload-events")'),
-    content: z.string().describe('Markdown content for the knowledge document'),
-  },
-  async (params) => {
-    const result = createKnowledge(params.slug, params.content)
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
-  }
-)
-
-// --- System Tools ---
-
-server.tool(
-  'talon_restart',
-  'Quit and relaunch Talon. Use this to apply configuration changes or recover from issues.',
-  {},
-  async () => {
-    const result = await restartTalon()
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
-  }
-)
-
-server.tool(
-  'talon_mimic',
-  'Simulate speaking a phrase to Talon. Executes the phrase as if it were spoken by the user.',
-  {
-    phrase: z
-      .string()
-      .describe('The phrase to simulate speaking (e.g., "go to sleep", "help alphabet")'),
-  },
-  async (params) => {
-    const result = await mimicPhrase(params)
-    return { content: [{ type: 'text', text: result }] }
-  }
-)
+// Register all tools
+registerLogTools(server)
+registerScopeTools(server)
+registerKnowledgeTools(server)
+registerSystemTools(server)
 
 // Start server
 async function main() {

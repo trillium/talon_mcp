@@ -1,13 +1,22 @@
 import { exec } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
 const execAsync = promisify(exec)
+const TIMESTAMP_FILE = join(homedir(), '.talon', 'launch_timestamp')
 
 export interface StartupError {
   type: 'parse' | 'callback' | 'other'
   file?: string
+  message: string
+}
+
+export interface StartupWarning {
+  type: 'syntax' | 'deprecation' | 'other'
+  file?: string
+  line?: number
   message: string
 }
 
@@ -25,6 +34,7 @@ export interface RestartResult {
     errorCount: number
     warningCount: number
     errors: StartupError[]
+    warnings: StartupWarning[]
     speechEngineActive: boolean
     microphoneActive: boolean
     speechDetected: boolean
@@ -55,9 +65,27 @@ async function waitForTalonExit(timeoutMs = 10000): Promise<boolean> {
   return false
 }
 
-interface StartupLogState {
-  initialLogSize: number
-  launchTimestamp?: string
+function getLaunchTimestamp(): string | null {
+  try {
+    return readFileSync(TIMESTAMP_FILE, 'utf-8').trim()
+  } catch {
+    return null
+  }
+}
+
+async function waitForTimestampChange(
+  oldTimestamp: string | null,
+  timeoutMs = 30000
+): Promise<boolean> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    const newTimestamp = getLaunchTimestamp()
+    if (newTimestamp && newTimestamp !== oldTimestamp) {
+      return true
+    }
+    await sleep(500)
+  }
+  return false
 }
 
 async function getLogSize(logPath: string): Promise<number> {
@@ -76,30 +104,6 @@ async function getNewLogContent(logPath: string, fromByte: number): Promise<stri
   } catch {
     return ''
   }
-}
-
-async function waitForTalonReady(
-  timeoutMs = 30000
-): Promise<{ ready: boolean; state: StartupLogState }> {
-  const start = Date.now()
-  const logPath = join(homedir(), '.talon', 'talon.log')
-  const state: StartupLogState = { initialLogSize: await getLogSize(logPath) }
-
-  while (Date.now() - start < timeoutMs) {
-    const content = await getNewLogContent(logPath, state.initialLogSize)
-
-    // Check for the "Dispatched launch events" message in new log content
-    const match = content.match(
-      /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}).*Dispatched launch events/m
-    )
-    if (match) {
-      state.launchTimestamp = match[1]
-      return { ready: true, state }
-    }
-
-    await sleep(500)
-  }
-  return { ready: false, state }
 }
 
 function parseStartupErrors(logContent: string): StartupError[] {
@@ -157,10 +161,67 @@ function parseStartupErrors(logContent: string): StartupError[] {
   return errors
 }
 
+function parseStartupWarnings(logContent: string): StartupWarning[] {
+  const warnings: StartupWarning[] = []
+  const lines = logContent.split('\n')
+
+  for (const line of lines) {
+    // Python SyntaxWarning: WARNING /path/file.py:123: SyntaxWarning: message
+    const syntaxMatch = line.match(/WARNING\s+([^:]+):(\d+):\s+SyntaxWarning:\s+(.+)/)
+    if (syntaxMatch) {
+      warnings.push({
+        type: 'syntax',
+        file: syntaxMatch[1],
+        line: parseInt(syntaxMatch[2], 10),
+        message: syntaxMatch[3].trim(),
+      })
+      continue
+    }
+
+    // Python DeprecationWarning: WARNING /path/file.py:123: DeprecationWarning: message
+    const deprecationMatch = line.match(/WARNING\s+([^:]+):(\d+):\s+DeprecationWarning:\s+(.+)/)
+    if (deprecationMatch) {
+      warnings.push({
+        type: 'deprecation',
+        file: deprecationMatch[1],
+        line: parseInt(deprecationMatch[2], 10),
+        message: deprecationMatch[3].trim(),
+      })
+      continue
+    }
+
+    // Generic WARNING lines with file:line format
+    const genericFileMatch = line.match(/WARNING\s+([^:]+):(\d+):\s+(\w+Warning):\s+(.+)/)
+    if (genericFileMatch) {
+      warnings.push({
+        type: 'other',
+        file: genericFileMatch[1],
+        line: parseInt(genericFileMatch[2], 10),
+        message: `${genericFileMatch[3]}: ${genericFileMatch[4].trim()}`,
+      })
+      continue
+    }
+
+    // Other WARNING lines (but exclude noise like "warning(s) during startup")
+    if (line.includes('WARNING') && !line.includes('warning(s) during startup')) {
+      const warnMatch = line.match(/WARNING\s+(.+)/)
+      if (warnMatch && !warnings.some((w) => w.message.includes(warnMatch[1]))) {
+        warnings.push({
+          type: 'other',
+          message: warnMatch[1].trim(),
+        })
+      }
+    }
+  }
+
+  return warnings
+}
+
 interface StartupStats {
   errorCount: number
   warningCount: number
   errors: StartupError[]
+  warnings: StartupWarning[]
   speechEngineActive: boolean
   microphoneActive: boolean
 }
@@ -170,6 +231,7 @@ function parseStartupStats(logContent: string): StartupStats {
     errorCount: 0,
     warningCount: 0,
     errors: [],
+    warnings: [],
     speechEngineActive: false,
     microphoneActive: false,
   }
@@ -186,8 +248,9 @@ function parseStartupStats(logContent: string): StartupStats {
     stats.warningCount = parseInt(warnMatch[1], 10)
   }
 
-  // Parse individual errors
+  // Parse individual errors and warnings
   stats.errors = parseStartupErrors(logContent)
+  stats.warnings = parseStartupWarnings(logContent)
 
   // Check for speech engine activation
   stats.speechEngineActive = /\(SpeechSystem\) Activating speech engine:/.test(logContent)
@@ -220,13 +283,20 @@ async function waitForSpeechDetection(
 
 /**
  * Restart Talon by quitting and relaunching.
- * Blocks until Talon is fully ready, then reports startup errors and speech status.
+ * Blocks until Talon is fully ready (detected via timestamp file change),
+ * then reports startup errors and speech status.
  */
 export async function restartTalon(): Promise<RestartResult> {
   const totalStart = Date.now()
   const logPath = join(homedir(), '.talon', 'talon.log')
 
   try {
+    // Read current timestamp before restart
+    const oldTimestamp = getLaunchTimestamp()
+
+    // Get log size before restart for parsing startup errors later
+    const initialLogSize = await getLogSize(logPath)
+
     // Quit Talon gracefully via AppleScript
     await execAsync('osascript -e \'quit app "Talon"\'')
 
@@ -251,12 +321,9 @@ export async function restartTalon(): Promise<RestartResult> {
     // Relaunch Talon
     await execAsync('open /Applications/Talon.app')
 
-    // Minimum wait for Talon to start initializing
-    await sleep(2000)
-
-    // Wait for Talon to be ready
+    // Wait for timestamp file to change (confirms Talon is ready)
     const readyStart = Date.now()
-    const { ready, state } = await waitForTalonReady(30000)
+    const ready = await waitForTimestampChange(oldTimestamp, 30000)
     const readyWaitMs = Date.now() - readyStart
 
     if (!ready) {
@@ -272,12 +339,12 @@ export async function restartTalon(): Promise<RestartResult> {
     }
 
     // Get startup log content for analysis
-    const startupLogContent = await getNewLogContent(logPath, state.initialLogSize)
+    const startupLogContent = await getNewLogContent(logPath, initialLogSize)
     const startupStats = parseStartupStats(startupLogContent)
 
     // Wait for speech detection as confirmation speech recognition is working
     const speechStart = Date.now()
-    const speechDetected = await waitForSpeechDetection(logPath, state.initialLogSize, 15000)
+    const speechDetected = await waitForSpeechDetection(logPath, initialLogSize, 15000)
     const speechReadyMs = Date.now() - speechStart
 
     // Build result message
@@ -307,6 +374,7 @@ export async function restartTalon(): Promise<RestartResult> {
         errorCount: startupStats.errorCount,
         warningCount: startupStats.warningCount,
         errors: startupStats.errors,
+        warnings: startupStats.warnings,
         speechEngineActive: startupStats.speechEngineActive,
         microphoneActive: startupStats.microphoneActive,
         speechDetected,
