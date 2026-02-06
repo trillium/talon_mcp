@@ -13,10 +13,12 @@ import { fileURLToPath } from 'node:url'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
+  registerCommandHistoryTools,
   registerKnowledgeTools,
   registerLogTools,
   registerScopeTools,
   registerSystemTools,
+  registerVscodeTools,
 } from './lib/registrations'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -56,6 +58,9 @@ Tools:
   talon_getStartupHistory Get startup status history
   talon_mimic             Simulate speaking a phrase
   talon_upgradeKnausj     Upgrade community/knausj fork to latest
+  talon_getCommandHistory Get recent voice command history
+  talon_vscode            Execute a VSCode command
+  talon_vscodeWithArgs    Execute a VSCode command with arguments
 `)
   process.exit(0)
 }
@@ -72,10 +77,12 @@ const server = new McpServer({
 })
 
 // Register all tools
+registerCommandHistoryTools(server)
 registerLogTools(server)
 registerScopeTools(server)
 registerKnowledgeTools(server)
 registerSystemTools(server)
+registerVscodeTools(server)
 
 // Start server
 async function main() {
